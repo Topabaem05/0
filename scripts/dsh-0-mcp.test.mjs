@@ -5,11 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import {
+  DEFAULT_DSH_PURGE_PACKAGE,
   DEFAULT_MCP_TOOLS,
   UsageError,
   assertRequestedEnvironment,
   buildDshArgs,
+  buildDshPurgeRows,
   buildMcpArgs,
+  buildProfilePatch,
   parseRunnerArgs,
   runRunner,
 } from "./dsh-0-mcp.mjs";
@@ -80,6 +83,65 @@ test("DSH runner preserves 0 engagement arguments", () => {
   );
 });
 
+
+test("dsh-purge harness plugin is off unless requested", () => {
+  const options = parseRunnerArgs(baseArgs, "/workspace");
+  assert.equal(options.withDshPurge, false);
+  assert.equal(options.dshPurgePackage, DEFAULT_DSH_PURGE_PACKAGE);
+
+  const patch = buildProfilePatch({
+    entrypoint: "/opt/0/dist/0.js",
+    serverCwd: "/opt/0",
+    mcpArgs: buildMcpArgs(options, "/opt/0/dist/0.js"),
+    mcpEnv: [],
+  });
+  assert.equal(patch.includes("dsh-purge"), false);
+  assert.equal(patch.includes("system-prompt"), false);
+});
+
+test("--with-dsh-purge mounts the dsh-purge rows ahead of the 0 MCP client", () => {
+  const options = parseRunnerArgs([...baseArgs.slice(0, -1), "--with-dsh-purge", baseArgs.at(-1)], "/workspace");
+  assert.equal(options.withDshPurge, true);
+
+  const patch = buildProfilePatch({
+    entrypoint: "/opt/0/dist/0.js",
+    serverCwd: "/opt/0",
+    mcpArgs: buildMcpArgs(options, "/opt/0/dist/0.js"),
+    mcpEnv: [],
+    withDshPurge: options.withDshPurge,
+    dshPurgePackage: options.dshPurgePackage,
+  });
+
+  assert.match(patch, /- id: dsh-purge\n\s+name: "dsh-purge-community"\n\s+inject: \[systemPrompt, tools\]/);
+  assert.match(patch, /name: "dsh-purge-community\/presets-plugin"/);
+  assert.match(patch, /autoApplyOnStart: false/);
+  assert.match(patch, /autoUpdateOnStart: false/);
+  assert.ok(patch.indexOf("id: dsh-purge") < patch.indexOf("id: mcp-0"));
+  // The 0-only tool boundary stays in place with the plugin mounted.
+  assert.match(patch, /- id: tool-bash\n  disabled: true/);
+  assert.match(patch, /name: '@deepseek-ai\/dsh-mcp-client'/);
+});
+
+test("dsh-purge package name can be overridden but must be a package name", () => {
+  const options = parseRunnerArgs([
+    ...baseArgs.slice(0, -1),
+    "--with-dsh-purge",
+    "--dsh-purge-package", "@scope/dsh-purge-fork",
+    baseArgs.at(-1),
+  ], "/workspace");
+  assert.equal(options.dshPurgePackage, "@scope/dsh-purge-fork");
+  assert.match(buildDshPurgeRows(options.dshPurgePackage), /name: "@scope\/dsh-purge-fork\/presets-plugin"/);
+
+  assert.throws(
+    () => parseRunnerArgs([...baseArgs.slice(0, -1), "--dsh-purge-package", "dsh-purge", baseArgs.at(-1)]),
+    /requires --with-dsh-purge/,
+  );
+  assert.throws(
+    () => parseRunnerArgs([...baseArgs.slice(0, -1), "--with-dsh-purge", "--dsh-purge-package", "../evil: x", baseArgs.at(-1)]),
+    /npm package name/,
+  );
+  assert.throws(() => buildDshPurgeRows("not a package"), UsageError);
+});
 
 test("DSH invocation stays a one-shot headless profile command", () => {
   assert.deepEqual(

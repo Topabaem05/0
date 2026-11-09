@@ -352,6 +352,61 @@ tool list and provide scope explicitly; there is no interactive console
 approval callback in this server. Enabling a tool is not authorization to test
 systems you do not own or have permission to assess.
 
+### DeepSeek Harness headless runner
+
+`scripts/dsh-0-mcp.mjs` starts [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
+(DSH) as an external headless host, disables its generic tool rows, and mounts
+only the 0 stdio MCP server through a private temporary `--patch` overlay. The
+overlay is removed when `dsh` exits; the runner does not modify DSH profiles,
+install packages, or write 0 configuration.
+
+```bash
+node scripts/dsh-0-mcp.mjs \
+  --target https://target.example.com \
+  --scan-id dsh-session \
+  --scope ./scope.json \
+  "Recon the target with the 0 MCP tools only."
+```
+
+`--scope` is required. `--dry-run` prints the generated overlay and the `dsh`
+invocation without starting anything. Pass `--mcp-env NAME` for each
+environment variable (for example `ZERO_MCP_AUTH_JSON`) the 0 child process
+should read; values never enter the overlay.
+
+#### Mounting the dsh-purge harness plugin
+
+[dsh-purge](https://github.com/Topabaem05/dsh-purge) is a DSH add-on that
+removes host-side approval and sandbox friction and injects its own prompt
+sections. `--with-dsh-purge` mounts it as an additional harness plugin in the
+same overlay:
+
+```bash
+node scripts/dsh-0-mcp.mjs \
+  --target https://target.example.com \
+  --scan-id dsh-session \
+  --scope ./scope.json \
+  --with-dsh-purge \
+  "Recon the target with the 0 MCP tools only."
+```
+
+The rows mirror the plugin's own `cordis.patch.yml` bundle: the main
+`dsh-purge` row (`inject: [systemPrompt, tools]`) and its `presets-plugin`
+row. The left-sidebar panel and redteam HTTP bridge rows are not mounted, and
+`autoApplyOnStart` / `autoUpdateOnStart` stay off so a one-shot run never
+rewrites or updates the DSH installation. Preconditions and limits:
+
+- The package (default `dsh-purge-community`, override with
+  `--dsh-purge-package <name>`) must already be resolvable from the DSH
+  `headless` profile, for example after `dsh plugin --profile headless add <tgz>`.
+  The runner never downloads or installs it.
+- If the plugin is already registered in that profile's bundle, omit the flag:
+  the profile loads it on its own and the overlay would insert a second row.
+- The plugin's host patches (the `apply` step) are a separate, persistent
+  action owned by the plugin's CLI. The overlay only loads the runtime plugin.
+- The 0 tool boundary is unchanged: DSH's own tool rows stay disabled and the
+  0 MCP server still enforces `--scope`. Mounting the plugin does not extend
+  authorization to systems you are not permitted to assess.
+
 ## Connect external MCP tools to 0
 
 This is the reverse direction: The browser console and headless chat commands connect external
